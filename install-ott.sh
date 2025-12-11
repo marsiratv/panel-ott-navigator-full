@@ -1,50 +1,135 @@
-bash <(cat << 'ENDINSTALL'
 #!/bin/bash
+# OTT Navigator Panel Installer for Ubuntu 22.04 LTS
+# Author: OTT Panel System
+# Version: 2.0
+# Created: 2024-12-11
+
 set -e
 
-clear
-echo "╔════════════════════════════════════════════╗"
-echo "║   OTT Navigator - Complete Installation   ║"
-echo "║   With Login/Logout System                ║"
-echo "╚════════════════════════════════════════════╝"
-echo ""
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-if [ "$EUID" -ne 0 ]; then 
-    echo "❌ Run as root"
-    exit 1
-fi
+# Function to print colored output
+print_message() {
+    echo -e "${2}${1}${NC}"
+}
 
-echo "📦 [1/9] Updating system..."
-apt update -qq && apt upgrade -y -qq
+# Function to check if running as root
+check_root() {
+    if [ "$EUID" -ne 0 ]; then 
+        print_message "❌ Please run as root" "$RED"
+        print_message "   sudo bash install-ott.sh" "$YELLOW"
+        exit 1
+    fi
+}
 
-echo "📦 [2/9] Installing Node.js 18..."
-curl -fsSL https://deb.nodesource.com/setup_18.x | bash - >/dev/null 2>&1
-apt install -y nodejs
+# Function to check Ubuntu version
+check_ubuntu_version() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        if [ "$VERSION_ID" != "22.04" ]; then
+            print_message "⚠️  This script is optimized for Ubuntu 22.04 LTS" "$YELLOW"
+            print_message "   Detected: $NAME $VERSION_ID" "$YELLOW"
+            read -p "Continue anyway? (y/n): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
+        fi
+    fi
+}
 
-echo "📦 [3/9] Installing MySQL..."
-export DEBIAN_FRONTEND=noninteractive
-apt install -y mysql-server
-systemctl start mysql
-systemctl enable mysql
+# Function to update system
+update_system() {
+    print_message "📦 [1/10] Updating system packages..." "$BLUE"
+    apt update -qq
+    apt upgrade -y -qq
+    print_message "   ✓ System updated" "$GREEN"
+}
 
-DB_PASS="OttPanel2024"
-mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '${DB_PASS}';" 2>/dev/null
-mysql -u root -p${DB_PASS} -e "CREATE DATABASE IF NOT EXISTS ott_panel;" 2>/dev/null
-mysql -u root -p${DB_PASS} -e "FLUSH PRIVILEGES;" 2>/dev/null
+# Function to install Node.js 18
+install_nodejs() {
+    print_message "📦 [2/10] Installing Node.js 18..." "$BLUE"
+    
+    # Remove existing Node.js if any
+    apt remove -y nodejs npm 2>/dev/null || true
+    
+    # Install dependencies
+    apt install -y curl wget gnupg ca-certificates
+    
+    # Add NodeSource repository for Node.js 18
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - >/dev/null 2>&1
+    
+    # Install Node.js and npm
+    apt install -y nodejs
+    
+    # Verify installation
+    node_version=$(node -v 2>/dev/null || echo "none")
+    npm_version=$(npm -v 2>/dev/null || echo "none")
+    
+    print_message "   ✓ Node.js $node_version installed" "$GREEN"
+    print_message "   ✓ npm $npm_version installed" "$GREEN"
+}
 
-echo "📦 [4/9] Installing Nginx..."
-apt install -y nginx
-systemctl start nginx
-systemctl enable nginx
+# Function to install MySQL 8.0
+install_mysql() {
+    print_message "📦 [3/10] Installing MySQL 8.0..." "$BLUE"
+    
+    # Install MySQL
+    apt install -y mysql-server mysql-client
+    
+    # Start and enable MySQL
+    systemctl start mysql
+    systemctl enable mysql
+    
+    # Secure MySQL installation
+    DB_PASS="OttPanel2024"
+    
+    mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '${DB_PASS}';" 2>/dev/null || true
+    mysql -u root -p${DB_PASS} -e "CREATE DATABASE IF NOT EXISTS ott_panel;" 2>/dev/null || true
+    mysql -u root -p${DB_PASS} -e "FLUSH PRIVILEGES;" 2>/dev/null || true
+    
+    print_message "   ✓ MySQL 8.0 installed" "$GREEN"
+    print_message "   ✓ Database 'ott_panel' created" "$GREEN"
+    print_message "   ✓ Root password: $DB_PASS" "$YELLOW"
+}
 
-echo "📦 [5/9] Installing PM2..."
-npm install -g pm2
+# Function to install Nginx
+install_nginx() {
+    print_message "📦 [4/10] Installing Nginx..." "$BLUE"
+    
+    apt install -y nginx
+    
+    # Start and enable Nginx
+    systemctl start nginx
+    systemctl enable nginx
+    
+    print_message "   ✓ Nginx installed" "$GREEN"
+}
 
-echo "📦 [6/9] Creating application structure..."
-mkdir -p /var/www/ott-panel/public
-cd /var/www/ott-panel
+# Function to install PM2
+install_pm2() {
+    print_message "📦 [5/10] Installing PM2..." "$BLUE"
+    
+    npm install -g pm2
+    
+    print_message "   ✓ PM2 installed" "$GREEN"
+}
 
-cat > package.json << 'EOF'
+# Function to create application structure
+create_app_structure() {
+    print_message "📦 [6/10] Creating application structure..." "$BLUE"
+    
+    # Create directories
+    mkdir -p /var/www/ott-panel/public
+    cd /var/www/ott-panel
+    
+    # Create package.json
+    cat > package.json << 'EOF'
 {
   "name": "ott-panel",
   "version": "1.0.0",
@@ -60,21 +145,34 @@ cat > package.json << 'EOF'
   }
 }
 EOF
-
-npm install
-
-cat > .env << ENV
+    
+    # Install npm packages
+    npm install --silent
+    
+    # Create .env file
+    DB_PASS="OttPanel2024"
+    JWT_SECRET=$(openssl rand -hex 32)
+    
+    cat > .env << ENV
 PORT=3000
-JWT_SECRET=$(openssl rand -hex 32)
+JWT_SECRET=${JWT_SECRET}
 DB_HOST=localhost
 DB_USER=root
 DB_PASSWORD=${DB_PASS}
 DB_NAME=ott_panel
 ENV
+    
+    print_message "   ✓ Application structure created" "$GREEN"
+    print_message "   ✓ npm packages installed" "$GREEN"
+}
 
-echo "📦 [7/9] Creating backend server..."
-
-cat > server.js << 'SERVERCODE'
+# Function to create backend server
+create_backend() {
+    print_message "📦 [7/10] Creating backend server..." "$BLUE"
+    
+    cd /var/www/ott-panel
+    
+    cat > server.js << 'SERVERCODE'
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -476,11 +574,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Serve dashboard
-app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
-});
-
 // Start server
 const PORT = process.env.PORT || 3000;
 
@@ -502,11 +595,18 @@ initDatabase().then(() => {
   process.exit(1);
 });
 SERVERCODE
+    
+    print_message "   ✓ Backend server created" "$GREEN"
+}
 
-echo "📦 [8/9] Creating frontend files..."
-
-# Create Login Page
-cat > public/login.html << 'LOGINHTML'
+# Function to create frontend files
+create_frontend() {
+    print_message "📦 [8/10] Creating frontend files..." "$BLUE"
+    
+    cd /var/www/ott-panel/public
+    
+    # Create login page
+    cat > login.html << 'LOGINHTML'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -618,9 +718,9 @@ cat > public/login.html << 'LOGINHTML'
 </body>
 </html>
 LOGINHTML
-
-# Create Main Dashboard
-cat > public/dashboard.html << 'DASHBOARDHTML'
+    
+    # Create dashboard page
+    cat > dashboard.html << 'DASHBOARDHTML'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1151,9 +1251,9 @@ cat > public/dashboard.html << 'DASHBOARDHTML'
 </body>
 </html>
 DASHBOARDHTML
-
-# Create welcome page
-cat > public/index.html << 'INDEXHTML'
+    
+    # Create index page
+    cat > index.html << 'INDEXHTML'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1166,7 +1266,7 @@ cat > public/index.html << 'INDEXHTML'
     <div class="max-w-2xl w-full bg-gray-800 rounded-lg shadow-2xl p-8">
         <div class="text-center mb-8">
             <h1 class="text-4xl font-bold text-white mb-2">🚀 OTT Navigator Panel</h1>
-            <p class="text-gray-400">Server: 31.97.190.61</p>
+            <p class="text-gray-400">Complete IPTV Management System</p>
         </div>
         
         <div class="bg-green-600/10 border border-green-500 rounded-lg p-6 mb-6">
@@ -1175,11 +1275,12 @@ cat > public/index.html << 'INDEXHTML'
                 <p>• Backend API: <span class="text-green-400">Running</span></p>
                 <p>• Database: <span class="text-green-400">Connected</span></p>
                 <p>• Admin Account: <span class="text-green-400">Ready</span></p>
+                <p>• Nginx Server: <span class="text-green-400">Configured</span></p>
             </div>
         </div>
         
         <div class="bg-gray-700 rounded-lg p-6 mb-6">
-            <h3 class="text-white font-semibold mb-3">🔐 Default Login</h3>
+            <h3 class="text-white font-semibold mb-3">🔐 Default Login Credentials</h3>
             <div class="space-y-2 text-sm">
                 <div class="flex justify-between">
                     <span class="text-gray-400">Username:</span>
@@ -1189,38 +1290,52 @@ cat > public/index.html << 'INDEXHTML'
                     <span class="text-gray-400">Password:</span>
                     <span class="text-white font-mono">admin123</span>
                 </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Server IP:</span>
+                    <span class="text-white font-mono">31.97.190.61</span>
+                </div>
             </div>
         </div>
         
         <div class="space-y-3">
             <a href="/login.html" class="block w-full bg-blue-600 hover:bg-blue-700 text-white text-center font-semibold py-3 rounded-lg transition">
-                Login to Panel
+                🔐 Login to Admin Panel
             </a>
             <a href="/api/health" target="_blank" class="block w-full bg-gray-700 hover:bg-gray-600 text-white text-center py-3 rounded-lg transition">
-                Check API Status
+                📊 Check API Status
             </a>
         </div>
         
         <div class="mt-6 bg-yellow-600/10 border border-yellow-500 rounded-lg p-4">
-            <p class="text-yellow-400 text-sm font-semibold mb-2">⚠️ Security Reminder:</p>
-            <p class="text-gray-300 text-xs">Change default password immediately after first login!</p>
+            <p class="text-yellow-400 text-sm font-semibold mb-2">⚠️ Important Security Notice</p>
+            <p class="text-gray-300 text-xs">1. Change default admin password immediately</p>
+            <p class="text-gray-300 text-xs">2. Configure SSL certificate for production</p>
+            <p class="text-gray-300 text-xs">3. Setup regular database backups</p>
         </div>
         
         <p class="text-center text-gray-500 text-xs mt-6">
-            OTT Navigator Panel v1.0 | © 2024
+            OTT Navigator Panel v2.0 | Ubuntu 22.04 LTS | © 2024
         </p>
     </div>
 </body>
 </html>
 INDEXHTML
+    
+    print_message "   ✓ Frontend files created" "$GREEN"
+}
 
-echo "📦 [9/9] Finalizing installation..."
-
-# Configure Nginx
-cat > /etc/nginx/sites-available/ott << 'NGINXCONF'
+# Function to configure Nginx
+configure_nginx() {
+    print_message "📦 [9/10] Configuring Nginx..." "$BLUE"
+    
+    # Remove default site
+    rm -f /etc/nginx/sites-enabled/default
+    
+    # Create Nginx configuration
+    cat > /etc/nginx/sites-available/ott << 'NGINXCONF'
 server {
     listen 80;
-    server_name 31.97.190.61 srv1157221.hstgr.cloud;
+    server_name _;
     
     client_max_body_size 100M;
     
@@ -1247,120 +1362,192 @@ server {
     
     # Xtream Codes API
     location /player_api.php {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://localhost:3000/player_api.php;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
 }
 NGINXCONF
+    
+    # Enable site
+    ln -sf /etc/nginx/sites-available/ott /etc/nginx/sites-enabled/
+    
+    # Test Nginx configuration
+    nginx -t
+    
+    # Reload Nginx
+    systemctl reload nginx
+    
+    print_message "   ✓ Nginx configured" "$GREEN"
+}
 
-ln -sf /etc/nginx/sites-available/ott /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default
-
-# Test Nginx config
-nginx -t
-
-# Reload Nginx
-systemctl reload nginx
-
-# Start application with PM2
-cd /var/www/ott-panel
-pm2 delete ott-panel 2>/dev/null || true
-pm2 start server.js --name ott-panel
-pm2 save
-pm2 startup systemd -u root --hp /root
-
-# Setup firewall
-ufw --force enable
-ufw allow 22
-ufw allow 80
-ufw allow 443
-
-# Set permissions
-chown -R www-data:www-data /var/www/ott-panel
-chmod -R 755 /var/www/ott-panel
-
-# Save credentials
-cat > /var/www/ott-panel/CREDENTIALS.txt << CREDS
+# Function to finalize installation
+finalize_installation() {
+    print_message "📦 [10/10] Finalizing installation..." "$BLUE"
+    
+    cd /var/www/ott-panel
+    
+    # Start application with PM2
+    pm2 delete ott-panel 2>/dev/null || true
+    pm2 start server.js --name ott-panel
+    pm2 save
+    pm2 startup systemd -u root --hp /root
+    
+    # Configure firewall
+    ufw --force enable 2>/dev/null || true
+    ufw allow 22/tcp 2>/dev/null || true
+    ufw allow 80/tcp 2>/dev/null || true
+    ufw allow 443/tcp 2>/dev/null || true
+    
+    # Set permissions
+    chown -R www-data:www-data /var/www/ott-panel
+    chmod -R 755 /var/www/ott-panel
+    
+    # Create credentials file
+    SERVER_IP=$(hostname -I | awk '{print $1}' || echo "31.97.190.61")
+    
+    cat > /var/www/ott-panel/CREDENTIALS.txt << CREDS
 ═══════════════════════════════════════════════════════
-  OTT NAVIGATOR PANEL - INSTALLATION COMPLETE
+    OTT NAVIGATOR PANEL - UBUNTU 22.04 INSTALLATION
 ═══════════════════════════════════════════════════════
 
-🌐 Panel Access:
-   URL: http://31.97.190.61
-   Dashboard: http://31.97.190.61/dashboard.html
-   
-🔐 Admin Login:
-   Username: admin
-   Password: admin123
+🌐 ACCESS INFORMATION:
+   Panel URL:      http://${SERVER_IP}
+   Login Page:     http://${SERVER_IP}/login.html
+   Dashboard:      http://${SERVER_IP}/dashboard.html
+   API Health:     http://${SERVER_IP}/api/health
 
-📊 Database:
-   Database: ott_panel
-   User: root
-   Password: ${DB_PASS}
+🔐 ADMIN CREDENTIALS:
+   Username:       admin
+   Password:       admin123
+   Email:          admin@ott.com
 
-📁 Installation Directory:
+🗄️ DATABASE INFORMATION:
+   Database:       ott_panel
+   Username:       root
+   Password:       OttPanel2024
+   Host:           localhost
+   Port:           3306
+
+📁 INSTALLATION DIRECTORY:
    /var/www/ott-panel
 
-⚙️ Management Commands:
-   Status:  pm2 status
-   Logs:    pm2 logs ott-panel
-   Restart: pm2 restart ott-panel
-   Stop:    pm2 stop ott-panel
+⚙️ MANAGEMENT COMMANDS:
+   Check Status:   pm2 status
+   View Logs:      pm2 logs ott-panel
+   Restart App:    pm2 restart ott-panel
+   Stop App:       pm2 stop ott-panel
+   Start App:      pm2 start ott-panel
 
-📝 API Endpoints:
-   Health:  http://31.97.190.61/api/health
-   Login:   http://31.97.190.61/api/auth/login
-   M3U:     http://31.97.190.61/api/playlist/{username}
-   Xtream:  http://31.97.190.61/player_api.php
+🌐 NGINX COMMANDS:
+   Reload Nginx:   systemctl reload nginx
+   Restart Nginx:  systemctl restart nginx
+   Check Config:   nginx -t
 
-⚠️ IMPORTANT:
-   1. Change default admin password immediately
-   2. Setup SSL certificate for production
-   3. Configure automated backups
-   4. Keep this file secure
+🔧 ADDITIONAL ENDPOINTS:
+   Xtream API:     http://${SERVER_IP}/player_api.php
+   M3U Playlist:   http://${SERVER_IP}/api/playlist/{username}
+   User Login:     http://${SERVER_IP}/api/auth/login
 
-Installation Date: $(date)
+⚠️ SECURITY CHECKLIST:
+   1. ✓ Change default admin password
+   2. ✓ Setup SSL certificate (certbot --nginx)
+   3. ✓ Configure firewall rules
+   4. ✓ Setup automated backups
+   5. ✓ Regular system updates
+
+📝 INSTALLATION DETAILS:
+   Date:           $(date)
+   Ubuntu:         22.04 LTS
+   Node.js:        $(node -v)
+   NPM:            $(npm -v)
+   MySQL:          8.0
+   Nginx:          $(nginx -v 2>&1 | cut -d'/' -f2)
+
+🎯 NEXT STEPS:
+   1. Login and change admin password
+   2. Add your IPTV packages
+   3. Upload channel list
+   4. Create user accounts
+   5. Test M3U generation
+
 ═══════════════════════════════════════════════════════
 CREDS
+    
+    chmod 600 /var/www/ott-panel/CREDENTIALS.txt
+    
+    print_message "   ✓ Installation finalized" "$GREEN"
+}
 
-chmod 600 /var/www/ott-panel/CREDENTIALS.txt
+# Function to show installation summary
+show_summary() {
+    clear
+    SERVER_IP=$(hostname -I | awk '{print $1}' || echo "31.97.190.61")
+    
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║                                                          ║"
+    echo "║         ✅ OTT NAVIGATOR INSTALLATION COMPLETE!         ║"
+    echo "║                                                          ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    print_message "🌐 ACCESS INFORMATION:" "$BLUE"
+    echo "   Panel URL:      http://${SERVER_IP}"
+    echo "   Login Page:     http://${SERVER_IP}/login.html"
+    echo "   Dashboard:      http://${SERVER_IP}/dashboard.html"
+    echo ""
+    print_message "🔐 ADMIN CREDENTIALS:" "$BLUE"
+    echo "   Username:       admin"
+    echo "   Password:       admin123"
+    echo "   Email:          admin@ott.com"
+    echo ""
+    print_message "🗄️ DATABASE INFORMATION:" "$BLUE"
+    echo "   Database:       ott_panel"
+    echo "   Username:       root"
+    echo "   Password:       OttPanel2024"
+    echo ""
+    print_message "⚙️ MANAGEMENT COMMANDS:" "$BLUE"
+    echo "   pm2 status"
+    echo "   pm2 logs ott-panel"
+    echo "   pm2 restart ott-panel"
+    echo ""
+    print_message "📄 CREDENTIALS SAVED AT:" "$BLUE"
+    echo "   /var/www/ott-panel/CREDENTIALS.txt"
+    echo ""
+    print_message "⚠️ IMPORTANT SECURITY STEPS:" "$YELLOW"
+    echo "   1. Login and change default password immediately"
+    echo "   2. Setup SSL certificate: certbot --nginx"
+    echo "   3. Configure automated backups"
+    echo "   4. Keep your server updated"
+    echo ""
+    print_message "🎉 Your OTT Navigator Panel is ready!" "$GREEN"
+    echo ""
+}
 
-# Get server IP
-SERVER_IP=$(curl -s ifconfig.me || echo "31.97.190.61")
+# Main installation function
+main_installation() {
+    print_message "🚀 Starting OTT Navigator Panel Installation" "$GREEN"
+    print_message "   Ubuntu 22.04 LTS Edition" "$YELLOW"
+    echo ""
+    
+    # Run all installation steps
+    check_root
+    check_ubuntu_version
+    update_system
+    install_nodejs
+    install_mysql
+    install_nginx
+    install_pm2
+    create_app_structure
+    create_backend
+    create_frontend
+    configure_nginx
+    finalize_installation
+    show_summary
+}
 
-# Clear screen and show success
-clear
-echo "╔════════════════════════════════════════════════════════╗"
-echo "║                                                        ║"
-echo "║          ✅ INSTALLATION COMPLETE!                     ║"
-echo "║                                                        ║"
-echo "╚════════════════════════════════════════════════════════╝"
-echo ""
-echo "🌐 Access URLs:"
-echo "   Main:      http://${SERVER_IP}"
-echo "   Login:     http://${SERVER_IP}/login.html"
-echo "   Dashboard: http://${SERVER_IP}/dashboard.html"
-echo ""
-echo "🔐 Default Login:"
-echo "   Username:  admin"
-echo "   Password:  admin123"
-echo ""
-echo "📊 Management Commands:"
-echo "   pm2 status"
-echo "   pm2 logs ott-panel"
-echo "   pm2 restart ott-panel"
-echo ""
-echo "📄 Credentials saved at:"
-echo "   /var/www/ott-panel/CREDENTIALS.txt"
-echo ""
-echo "⚠️  IMPORTANT NEXT STEPS:"
-echo "   1. Login and change default password"
-echo "   2. Create packages and channels"
-echo "   3. Setup SSL: certbot --nginx -d yourdomain.com"
-echo "   4. Configure automated backups"
-echo ""
-echo "🎉 Your OTT Navigator Panel is ready!"
-echo ""
-ENDINSTALL
-)
+# Execute main function
+main_installation
+
+# Exit with success
+exit 0
